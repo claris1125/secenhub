@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <title>Scene Viewer (Local offline)</title>
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#0f1115}
@@ -20,45 +20,86 @@
 <canvas id="c"></canvas>
 
 <script type="module">
-// ---------- Endpoint autodetect (same-host preferred) ----------
-const host = (location.hostname && location.hostname !== 'localhost') ? location.hostname : 'localhost';
-const WS_URL      = `ws://${host}:8080/ws/scene`;
-const API_LATEST  = `http://${host}:8080/api/scene/latest`;
+// ============================
+// Endpoint autodetect
+// ============================
+const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+const http  = (location.protocol === 'https:') ? 'https' : 'http';
+const host  = (location.hostname && location.hostname !== 'localhost') ? location.hostname : 'localhost';
+
+const WS_URL     = `${proto}://${host}:8080/ws/scene`;
+const API_LATEST = `${http}://${host}:8080/api/scene/latest`;
+const ASSET_PORT = (new URLSearchParams(location.search)).get('asset_port') || '8000';
+const ASSET_BASE = `${http}://${host}:${ASSET_PORT}/assets/furniture`;
+
 document.getElementById('wsurl').textContent = WS_URL;
-
-// (NEW) assets base — 너의 GLB가 ~/scenehub/assets/furniture 에 있으므로:
-const ASSET_BASE  = `http://${host}:8000/assets/furniture`;
-
 const statusEl = document.getElementById('status');
 function setStatus(t){ statusEl.textContent = t; console.log('[viewer]', t); }
 
-// ---------- Local three.js modules ----------
+// ============================
+// Three.js modules
+// ============================
 import * as THREE from './lib/three/three.module.js';
 import { OrbitControls } from './lib/three/OrbitControls.js';
 import { GLTFLoader }   from './lib/three/GLTFLoader.js';
 
 setStatus('modules loaded');
 
-// ---------- Class → GLB map (viewer-side fallback) ----------
+// ============================
+// Class → GLB map (viewer-side fallback)
+// ============================
 const CLASS_TO_GLTF = {
-  'chair':         `${ASSET_BASE}/chair.glb`,
-  'table':         `${ASSET_BASE}/table.glb`,
-  'dining table':  `${ASSET_BASE}/officeTable.glb`,
-  'round table':   `${ASSET_BASE}/roundtable.glb`,
-  'student chair': `${ASSET_BASE}/studentChair.glb`,
-  'desk':          `${ASSET_BASE}/officeTable.glb`,
-  'couch':         `${ASSET_BASE}/roundtable.glb`,
+  'chair':              `${ASSET_BASE}/chair.glb`,
+  'table':              `${ASSET_BASE}/table.glb`,
+  'dining table':       `${ASSET_BASE}/officeTable.glb`,
+  'round table':        `${ASSET_BASE}/roundtable.glb`,
+  'student chair':      `${ASSET_BASE}/studentChair.glb`,
+  'desk':               `${ASSET_BASE}/officeTable.glb`,
+  'couch':              `${ASSET_BASE}/roundtable.glb`,
+  'tv':                 `${ASSET_BASE}/tv.glb`,
+  'monitor':            `${ASSET_BASE}/monitor.glb`,
+  'clock':              `${ASSET_BASE}/clock.glb`,
+  'trash can':          `${ASSET_BASE}/trash_bin.glb`,
+  'trash bin':          `${ASSET_BASE}/trash_bin.glb`,
+  'trashcan':           `${ASSET_BASE}/trash_bin.glb`,
+  'bookcase':           `${ASSET_BASE}/book_cabinet.glb`,
+  'bookshelf':          `${ASSET_BASE}/book_cabinet.glb`,
+  'book cabinet':       `${ASSET_BASE}/book_cabinet.glb`,
+  'filing cabinet':     `${ASSET_BASE}/filing_cabinet.glb`,
+  'cabinet':            `${ASSET_BASE}/filing_cabinet.glb`,
+  'science lab cabinet':`${ASSET_BASE}/science_lab_cabinet.glb`,
 };
-// YOLO 라벨 변형 보정
-const ALIASES = { 'dining_table':'dining table', 'round_table':'round table', 'sofa':'couch' };
+// YOLO 레이블 보정 alias
+const ALIASES = {
+  'dining_table': 'dining table',
+  'round_table': 'round table',
+  'sofa': 'couch',
+  'trash_can': 'trash can',
+  'trashbin': 'trash bin',
+  'trash-bin': 'trash bin',
+  'garbage_can': 'trash can',
+  'book_shelf': 'bookshelf',
+  'book_shelves': 'bookshelf',
+  'book_cabinet': 'book cabinet',
+  'filing_cabinet': 'filing cabinet',
+  'lab_cabinet': 'science lab cabinet',
+  'scientific_cabinet': 'science lab cabinet',
+};
 for (const [a, base] of Object.entries(ALIASES)) {
   if (!CLASS_TO_GLTF[a] && CLASS_TO_GLTF[base]) CLASS_TO_GLTF[a] = CLASS_TO_GLTF[base];
 }
 const norm = s => String(s||'').trim().toLowerCase();
 
-// ---------- Three.js setup ----------
-const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+// ============================
+// Three.js setup
+// ============================
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace     = THREE.SRGBColorSpace;     // r152+
+renderer.toneMapping          = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure  = 1.0;
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1115);
 
@@ -69,20 +110,32 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0,0,0); controls.update();
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const dl = new THREE.DirectionalLight(0xffffff, 1); dl.position.set(3,5,2); scene.add(dl);
+const dl = new THREE.DirectionalLight(0xffffff, 1);
+dl.position.set(3,5,2);
+scene.add(dl);
 scene.add(new THREE.GridHelper(20,20));
+// scene.add(new THREE.AxesHelper(1)); // 디버그용
 
-function resize(){ renderer.setSize(innerWidth, innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); }
+function resize(){
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+}
 addEventListener('resize', resize);
 resize();
-(function loop(){ renderer.render(scene, camera); requestAnimationFrame(loop); })();
 
-// ---------- Asset loading ----------
-const loader = new GLTFLoader();
+(function loop(){
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+})();
+
+// ============================
+// Asset loading / caching
+// ============================
+const loader   = new GLTFLoader();
 const glbCache = new Map();
 
 async function getGLB(uri){
-  // support relative (/assets/...) and absolute (http://IP:8000/...) URIs
   const key = uri;
   if(!glbCache.has(key)){
     const gltf = await loader.loadAsync(uri);
@@ -92,7 +145,7 @@ async function getGLB(uri){
 }
 
 function builtinMesh(kind){
-  switch(kind){
+  switch(String(kind||'box')){
     case 'box':      return new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial());
     case 'sphere':   return new THREE.Mesh(new THREE.SphereGeometry(0.5,32,16), new THREE.MeshStandardMaterial());
     case 'cylinder': return new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,1,24), new THREE.MeshStandardMaterial());
@@ -100,53 +153,70 @@ function builtinMesh(kind){
   }
 }
 
-// ---------- Live object map (upsert-only) ----------
+function rewriteMeshUri(uri, klas){
+  if (!uri) return CLASS_TO_GLTF[norm(klas)] || 'builtin:box';
+  if (uri.startsWith('package://')) {
+    const fname = uri.split('/').pop().replace(/\.(dae|obj)$/i, '.glb');
+    return `${ASSET_BASE}/${fname}`;
+  }
+  if (uri.startsWith('file://') || uri.startsWith('/')) {
+    const fname = uri.split('/').pop().replace(/\.(dae|obj)$/i, '.glb');
+    return `${ASSET_BASE}/${fname}`;
+  }
+  if (uri.startsWith('builtin:') && klas) {
+    const alias = CLASS_TO_GLTF[norm(klas)];
+    return alias || uri;
+  }
+  return uri;
+}
+
+function safe(v, d){ return Number.isFinite(v) ? v : d; }
+
+// ============================
+// Live object map (snapshot 기반 upsert)
+// ============================
 const live = new Map();
 
-/**
- * Upsert-only diff:
- * - create/update objects listed in diff.objects
- * - remove only if the object has { delete:true } or { deleted:true }
- * No global "remove unseen" sweep (prevents flicker on partial updates)
- */
+// 지연 적용 큐(프레임 단위로 병합)
+let pending = null, applying = false;
+async function scheduleApply(diff){
+  pending = diff;                 // 마지막 상태만 유지 (덮어쓰기)
+  if (applying) return;
+  applying = true;
+  while (pending){
+    const d = pending; pending = null;
+    await applyDiff(d);
+    await new Promise(r => requestAnimationFrame(()=>r()));
+  }
+  applying = false;
+}
+
 async function applyDiff(diff){
   if(!diff || !Array.isArray(diff.objects)) return;
 
   for(const o of diff.objects){
-    // explicit deletion
+    // 명시적 삭제
     if (o.delete === true || o.deleted === true){
       const obj = live.get(o.id);
-      if (obj){ scene.remove(obj); live.delete(o.id); }
+      if (obj){
+        scene.remove(obj);
+        live.delete(o.id);
+      }
       continue;
     }
 
-    // --- mesh_uri rewrite (핵심) ---
-    let uri = o.mesh_uri || '';
-
-    // package://...dae → /assets/*.glb 로 리라이트
-    if (uri.startsWith('package://')) {
-      const fname = uri.split('/').pop().replace(/\.dae$/i, '.glb');
-      uri = `${ASSET_BASE}/${fname}`;
-    }
-    // builtin/empty → class 기반으로 보충
-    if ((!uri || uri.startsWith('builtin:')) && o.class) {
-      const key = norm(o.class);
-      if (CLASS_TO_GLTF[key]) uri = CLASS_TO_GLTF[key];
-    }
-    console.log('[viewer] resolved uri for id', o.id, 'class=', o.class, '=>', uri);
-
-    // create if missing
+    // mesh 경로 정규화
+    let uri = rewriteMeshUri(String(o.mesh_uri||''), o.class);
+    // 존재 여부
     let obj = live.get(o.id);
     if(!obj){
       if(String(uri||'').startsWith('builtin:')){
         obj = builtinMesh(String(uri).split(':')[1]||'box');
       }else if(uri){
-        try{
-          obj = await getGLB(uri);
-        }catch(e){
+        try{ obj = await getGLB(uri); }
+        catch(e){
           console.error('[viewer] GLB load failed for', uri, e);
-          // fallback to box so we don't lose the instance
-          obj = builtinMesh('box');
+          obj = builtinMesh('box'); // 안전 폴백
         }
       }else{
         obj = builtinMesh('box');
@@ -155,31 +225,50 @@ async function applyDiff(diff){
       live.set(o.id, obj);
     }
 
-    // apply transforms (with sane guards)
+    // pose/scale 반영 (가드 포함)
     if(Array.isArray(o.position_m)){
-      obj.position.set(o.position_m[0]||0, o.position_m[1]||0, o.position_m[2]||0);
+      obj.position.set(
+        safe(Number(o.position_m[0]),0),
+        safe(Number(o.position_m[1]),0),
+        safe(Number(o.position_m[2]),0)
+      );
     }
     if(Array.isArray(o.orientation_xyzw) && o.orientation_xyzw.length===4){
       obj.quaternion.set(
-        Number(o.orientation_xyzw[0])||0,
-        Number(o.orientation_xyzw[1])||0,
-        Number(o.orientation_xyzw[2])||0,
-        Number(o.orientation_xyzw[3])||1
+        safe(Number(o.orientation_xyzw[0]),0),
+        safe(Number(o.orientation_xyzw[1]),0),
+        safe(Number(o.orientation_xyzw[2]),0),
+        safe(Number(o.orientation_xyzw[3]),1)
       );
     }
     if(Array.isArray(o.scale)){
       obj.scale.set(
-        Math.max(5e-2, Number(o.scale[0])||1),
-        Math.max(5e-2, Number(o.scale[1])||1),
-        Math.max(5e-2, Number(o.scale[2])||1)
+        Math.max(5e-2, safe(Number(o.scale[0]),1)),
+        Math.max(5e-2, safe(Number(o.scale[1]),1)),
+        Math.max(5e-2, safe(Number(o.scale[2]),1))
       );
     }
   }
+
+  lastUpdate = performance.now();
 }
 
-// ---------- Initial snapshot ----------
+// ============================
+// HUD (객체 수 / 최신 수신 경과)
+// ============================
+let lastUpdate = 0;
+(function hud(){
+  const n = live.size;
+  const ago = ((performance.now()-lastUpdate)/1000).toFixed(1);
+  setStatus(`objects: ${n} | last: ${isFinite(ago)?ago:'-'}s ago`);
+  requestAnimationFrame(hud);
+})();
+
+// ============================
+// Initial snapshot
+// ============================
 try{
-  const r = await fetch(API_LATEST, {cache:'no-store'});
+  const r = await fetch(API_LATEST, { cache:'no-store' });
   if(r.ok){
     await applyDiff(await r.json());
     setStatus('loaded latest snapshot');
@@ -190,18 +279,39 @@ try{
   console.warn('[viewer] latest fetch failed', e);
 }
 
-// ---------- WebSocket live updates ----------
-setStatus('connecting ws…');
-const ws = new WebSocket(WS_URL);
-ws.onopen  = ()=> setStatus('WebSocket connected');
-ws.onerror = e => { console.error('[viewer] ws error', e); setStatus('WebSocket error'); };
-ws.onclose = ()=> setStatus('WebSocket closed');
-ws.onmessage = async ev => {
-  try{
-    const diff = JSON.parse(ev.data);
-    if(diff.frame === 'map') await applyDiff(diff);
-  }catch(e){ console.error('[viewer] onmessage parse/apply error', e); }
-};
+// ============================
+// WebSocket (auto reconnect + heartbeat)
+// ============================
+let ws, retry = 0, hbTimer;
+function connectWS(){
+  setStatus('connecting ws…');
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    setStatus('WebSocket connected'); retry = 0;
+    clearInterval(hbTimer);
+    // heartbeat (서버가 pong을 돌려주지 않아도 무방)
+    hbTimer = setInterval(()=>{ try{ ws.send('ping'); }catch{} }, 15000);
+  };
+
+  ws.onmessage = (ev) => {
+    if (ev.data === 'pong') return;
+    try{
+      const diff = JSON.parse(ev.data);
+      if(diff.frame === 'map') scheduleApply(diff);
+    }catch(e){ console.error('[viewer] onmessage parse/apply error', e); }
+  };
+
+  ws.onerror = (e) => { console.warn('[viewer] ws error', e); };
+
+  ws.onclose = () => {
+    setStatus('WebSocket closed');
+    clearInterval(hbTimer);
+    const delay = Math.min(30000, 1000 * Math.pow(2, retry++)); // 지수 백오프
+    setTimeout(connectWS, delay);
+  };
+}
+connectWS();
 </script>
 </body>
 </html>
