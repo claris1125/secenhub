@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Scene Viewer (Local hardened)</title>
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#0f1115}
+    #info{position:fixed;top:8px;left:8px;color:#fff;font:12px/1.4 sans-serif;opacity:.9;z-index:10;max-width:90vw}
+    #info code{background:#222;padding:2px 4px;border-radius:4px}
+    #status{margin-top:6px}
+  </style>
+</head>
+<body>
+<div id="info">
+  WS: <code id="wsurl"></code>
+  <div id="status">booting…</div>
+  <div>Test POST:</div>
+  <code>curl -X POST http://localhost:8080/api/scene/push -H "X-Scene-Token: changeme" -H "Content-Type: application/json" -d '{"frame":"map","objects":[{"id":1,"class":"box","mesh_uri":"builtin:box","position_m":[0,0,0],"orientation_xyzw":[0,0,0,1],"scale":[1,1,1]}]}'</code>
+</div>
+<canvas id="c"></canvas>
+
+<script type="module">
+const WS_URL = 'ws://localhost:8080/ws/scene';  // ★ 하드코딩
+const API_LATEST = 'http://localhost:8080/api/scene/latest';
+document.getElementById('wsurl').textContent = WS_URL;
+
+const statusEl = document.getElementById('status');
+function setStatus(t){ statusEl.textContent = t; console.log('[viewer]', t); }
+
+// 1) 모듈 로드
+setStatus('loading modules…');
+const [{default: THREE}, Controls, Loaders] = await Promise.all([
+  import('https://unpkg.com/three/build/three.module.js').catch(e=>{ setStatus('three.module.js load failed'); throw e; }),
+  import('https://unpkg.com/three/examples/jsm/controls/OrbitControls.js').catch(e=>{ setStatus('OrbitControls load failed'); throw e; }),
+  import('https://unpkg.com/three/examples/jsm/loaders/GLTFLoader.js').catch(e=>{ setStatus('GLTFLoader load failed'); throw e; }),
+]);
+const {OrbitControls} = Controls;
+const {GLTFLoader} = Loaders;
+setStatus('modules loaded');
+
+// 2) 기본 씬
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+function resize(){ renderer.setSize(innerWidth, innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1115);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 2000);
+camera.position.set(3, 3, 3);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0,0,0); controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dl = new THREE.DirectionalLight(0xffffff, 1); dl.position.set(3,5,2); scene.add(dl);
+scene.add(new THREE.GridHelper(20, 20));
+
+const loader = new GLTFLoader();
+const cache = new Map();
+async function getGLB(uri){
+  if(!cache.has(uri)){
+    const gltf = await loader.loadAsync(uri).catch(e=>{ console.error('GLB load fail:', uri, e); throw e; });
+    cache.set(uri, gltf.scene);
+  }
+  return cache.get(uri).clone(true);
+}
+function builtinMesh(kind){
+  switch(kind){
+    case 'box':     return new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial());
+    case 'sphere':  return new THREE.Mesh(new THREE.SphereGeometry(0.5,32,16), new THREE.MeshStandardMaterial());
+    case 'cylinder':return new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,1,24), new THREE.MeshStandardMaterial());
+    default:        return new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial());
+  }
+}
+
+const live = new Map();
+async function applyDiff(diff){
+  if(!diff || !Array.isArray(diff.objects)) return;
+  const seen = new Set();
+  for(const o of diff.objects){
+    seen.add(o.id);
+    let obj = live.get(o.id);
+    if(!obj){
+      if(String(o.mesh_uri||'').startsWith('builtin:')){
+        obj = builtinMesh(String(o.mesh_uri).split(':')[1]||'box');
+      }else{
+        obj = await getGLB(o.mesh_uri);
+      }
+      scene.add(obj);
+      live.set(o.id, obj);
+    }
+    if(Array.isArray(o.position_m)) obj.position.set(o.position_m[0]||0, o.position_m[1]||0, o.position_m[2]||0);
+    if(Array.isArray(o.orientation_xyzw) && o.orientation_xyzw.length===4) obj.quaternion.set(
+      o.orientation_xyzw[0], o.orientation_xyzw[1], o.orientation_xyzw[2], o.orientation_xyzw[3]
+    );
+    if(Array.isArray(o.scale)) obj.scale.set(
+      Math.max(1e-3,o.scale[0]||1), Math.max(1e-3,o.scale[1]||1), Math.max(1e-3,o.scale[2]||1)
+    );
+  }
+  // 누락 객체 삭제
+  for(const [id, obj] of Array.from(live.entries())){
+    if(!seen.has(id)){ scene.remove(obj); live.delete(id); }
+  }
+}
+
+// 3) 렌더 루프
+function loop(){ renderer.render(scene, camera); requestAnimationFrame(loop); }
+resize(); loop();
+
+// 4) 최신 스냅샷 1회 로드 (WS 첫 프레임 놓쳤을 때 대비)
+try{
+  const r = await fetch(API_LATEST);
+  if(r.ok){
+    const latest = await r.json();
+    await applyDiff(latest);
+    setStatus('loaded latest snapshot');
+  }else{
+    setStatus('failed to load latest snapshot: ' + r.status);
+  }
+}catch(e){
+  console.warn('latest fetch failed', e);
+}
+
+// 5) WebSocket 연결
+setStatus('connecting ws…');
+const ws = new WebSocket(WS_URL);
+ws.onopen = ()=> setStatus('WebSocket connected');
+ws.onerror = e => setStatus('WebSocket error (see console)');
+ws.onclose = ()=> setStatus('WebSocket closed');
+ws.onmessage = async ev => {
+  try{
+    const diff = JSON.parse(ev.data);
+    if(diff.frame==='map') await applyDiff(diff);
+  }catch(e){ console.error('onmessage parse/apply error', e); }
+};
+</script>
+</body>
+</html>
