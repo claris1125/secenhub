@@ -59,35 +59,40 @@ const CLASS_TO_GLTF = {
   'tv':                 `${ASSET_BASE}/tv.glb`,
   'monitor':            `${ASSET_BASE}/monitor.glb`,
   'clock':              `${ASSET_BASE}/clock.glb`,
-  'trash can':          `${ASSET_BASE}/trash_bin.glb`,
   'trash bin':          `${ASSET_BASE}/trash_bin.glb`,
-  'trashcan':           `${ASSET_BASE}/trash_bin.glb`,
   'bookcase':           `${ASSET_BASE}/book_cabinet.glb`,
-  'bookshelf':          `${ASSET_BASE}/book_cabinet.glb`,
-  'book cabinet':       `${ASSET_BASE}/book_cabinet.glb`,
   'filing cabinet':     `${ASSET_BASE}/filing_cabinet.glb`,
-  'cabinet':            `${ASSET_BASE}/filing_cabinet.glb`,
   'science lab cabinet':`${ASSET_BASE}/science_lab_cabinet.glb`,
+  'laptop':             'builtin:box',
 };
-// YOLO 레이블 보정 alias
+// YOLO 레이블 보정 alias (lower-case key → canonical key)
 const ALIASES = {
   'dining_table': 'dining table',
   'round_table': 'round table',
   'sofa': 'couch',
-  'trash_can': 'trash can',
-  'trashbin': 'trash bin',
+  'trash can': 'trash bin',
+  'trashcan': 'trash bin',
   'trash-bin': 'trash bin',
-  'garbage_can': 'trash can',
-  'book_shelf': 'bookshelf',
-  'book_shelves': 'bookshelf',
-  'book_cabinet': 'book cabinet',
+  'garbage can': 'trash bin',
+  'garbage bin': 'trash bin',
+  'book_shelf': 'bookcase',
+  'book shelves': 'bookcase',
+  'book_shelves': 'bookcase',
+  'book shelf': 'bookcase',
+  'bookcase': 'bookcase',
+  'bookshelf': 'bookcase',
+  'bookcases': 'bookcase',
+  'book cabinet': 'bookcase',
+  'book_cabinet': 'bookcase',
   'filing_cabinet': 'filing cabinet',
+  'cabinet': 'filing cabinet',
+  'file cabinet': 'filing cabinet',
   'lab_cabinet': 'science lab cabinet',
+  'lab cabinet': 'science lab cabinet',
+  'science_lab_cabinet': 'science lab cabinet',
   'scientific_cabinet': 'science lab cabinet',
+  'scientific cabinet': 'science lab cabinet',
 };
-for (const [a, base] of Object.entries(ALIASES)) {
-  if (!CLASS_TO_GLTF[a] && CLASS_TO_GLTF[base]) CLASS_TO_GLTF[a] = CLASS_TO_GLTF[base];
-}
 const norm = s => String(s||'').trim().toLowerCase();
 
 // ============================
@@ -154,7 +159,9 @@ function builtinMesh(kind){
 }
 
 function rewriteMeshUri(uri, klas){
-  if (!uri) return CLASS_TO_GLTF[norm(klas)] || 'builtin:box';
+  const key = norm(klas);
+  const canonical = ALIASES[key] || key;
+  if (!uri) return CLASS_TO_GLTF[canonical] || 'builtin:box';
   if (uri.startsWith('package://')) {
     const fname = uri.split('/').pop().replace(/\.(dae|obj)$/i, '.glb');
     return `${ASSET_BASE}/${fname}`;
@@ -164,7 +171,7 @@ function rewriteMeshUri(uri, klas){
     return `${ASSET_BASE}/${fname}`;
   }
   if (uri.startsWith('builtin:') && klas) {
-    const alias = CLASS_TO_GLTF[norm(klas)];
+    const alias = CLASS_TO_GLTF[canonical];
     return alias || uri;
   }
   return uri;
